@@ -4,9 +4,13 @@ const ejs = require('ejs');
 const bodyParser= require('body-parser');
 const mongoose = require('mongoose');
 main().catch(err => console.log(err));
-const encrypt = require('mongoose-encryption')
+
+const bcrypt = require('bcrypt');
+const saltRounds = 10;
+
 const app = express();
 
+// console.log(process.env.SECRET);
 app.set('view engine', 'ejs');
 
 app.use(express.static('public'));
@@ -22,9 +26,6 @@ const userSchema =  new mongoose.Schema({
    password: String
 });
 
-const secret = 'this is our long secret.';
-
-userSchema.plugin(encrypt, {secret: secret , encryptedFields:['password']})
 const user = new mongoose.model('User', userSchema);
 
 app.get('/', (req,res)=>{
@@ -36,18 +37,24 @@ app.get('/register', (req,res)=>{
 });
 
 app.post('/register', (req,res)=>{
-const newUser = new user({
-  email: req.body.username,
-  password:req.body.password
-})
 
-newUser.save(function(err){
-  if (err) {
-    console.log(err);
-  }else {
-    res.render('secrets')
-  }
-})
+  bcrypt.hash(req.body.password, saltRounds).then(function(hash) {
+      // Store hash in your password DB.
+      const newUser = new user({
+        email: req.body.username,
+        password: hash
+      })
+
+      newUser.save(function(err){
+        if (err) {
+          console.log(err);
+        }else {
+          res.render('secrets')
+        }
+      })
+
+  });
+
 })
 app.get('/login',(req,res)=>{
   res.render('login')
@@ -55,16 +62,22 @@ app.get('/login',(req,res)=>{
 
 app.post('/login', (req,res)=>{
   const userName = req.body.username;
-  const password = req.body.password;
+  const password = req.body.password
+
 
   user.findOne({email:userName}, (err,foundUser)=>{
     if (err) {
       console.log(err);
     }else {
       if (foundUser) {
-        if (foundUser.password === password) {
-          res.render('secrets')
-        }
+        bcrypt.compare(password, foundUser.password).then(function(result) {
+   // result == true
+   if (result === true) {
+     res.render('secrets')
+   }else {
+       res.redirect('/')
+   }
+});
       }
     }
   })

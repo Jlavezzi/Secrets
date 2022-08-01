@@ -13,7 +13,6 @@ const findOrCreate = require('mongoose-findorcreate');
 
 const app = express();
 
-// console.log(process.env.SECRET);
 app.set('view engine', 'ejs');
 
 app.use(express.static('public'));
@@ -25,7 +24,7 @@ app.use(session({
   secret: 'our little secret.',
   resave: false,
   saveUninitialized: true
-}))
+}));
 
 //initialize passport
 app.use(passport.initialize());
@@ -40,6 +39,7 @@ async function main() {
 const userSchema =  new mongoose.Schema({
    email:String,
    password: String,
+   secret:String,
    googleId:String
 });
 //configure our schema to use passportLocalMongoose
@@ -50,9 +50,9 @@ const user = new mongoose.model('User', userSchema);
 
 //local strategy to authenticate users
 passport.use(user.createStrategy());
+
+
 //configuration to create and crumble cookies(passportLocalMongoose)
-
-
 passport.serializeUser(function(user, cb) {
   process.nextTick(function() {
     return cb(null, {
@@ -70,8 +70,6 @@ passport.deserializeUser(function(user, cb) {
 });
 
 
-// passport.serializeUser(user.serializeUser())
-// passport.deserializeUser(user.deserializeUser())
 //configuring google strategy
 passport.use(new GoogleStrategy({
     clientID: process.env.CLIENT_ID,
@@ -88,95 +86,139 @@ passport.use(new GoogleStrategy({
   }
 ));
 
-passport.use(new FacebookStrategy({
-    clientID: FACEBOOK_APP_ID,
-    clientSecret: FACEBOOK_APP_SECRET,
-    callbackURL: "http://localhost:3000/auth/facebook/secrets"
-  },
-  function(accessToken, refreshToken, profile, cb) {
-    user.findOrCreate({ facebookId: profile.id }, function (err, user) {
-      return cb(err, user);
-    });
-  }
-));
+// passport.use(new FacebookStrategy({
+//     clientID: FACEBOOK_APP_ID,
+//     clientSecret: FACEBOOK_APP_SECRET,
+//     callbackURL: "http://localhost:3000/auth/facebook/secrets"
+//   },
+//   function(accessToken, refreshToken, profile, cb) {
+//     user.findOrCreate({ facebookId: profile.id }, function (err, user) {
+//       return cb(err, user);
+//     });
+//   }
+// ));
+
+//root route render home
 app.get('/', (req,res)=>{
   res.render('home')
 });
 
+//sign up in with google
+//use passport to authenticate using google strategy
+//first authentication
 app.get('/auth/google',
   passport.authenticate('google', { scope:
       [ 'email', 'profile' ] }
 ));
-
+//second authentication via our server
 app.get( '/auth/google/secrets',
     passport.authenticate( 'google', {
-     // scope: 'https://www.googleapis.com/auth/plus.login',
         successRedirect: '/secrets',
         failureRedirect: '/register'
 }));
 
+//get request to register route
 app.get('/register', (req,res)=>{
   res.render('register')
 });
 
-
+//get request to secrets routes
 app.get('/secrets', (req,res)=>{
-//check if the request is authenticated
-  if (req.isAuthenticated()) {
-    res.render('secrets')
+// unauthenticated access now allowed renders secrets publicly but anonymously
+  user.find({'secret' : {$ne:null}}, (err, foundUser)=>{
+    if (err) {
+      console.log(err);
+    }else {
+      if (foundUser) {
+        res.render('secrets', {usersWithSecrets:foundUser})
+      }
+    }
+  })
+});
 
-  }else {
-    res.redirect('/login')
-  }
+// get request to submit
+//check if req is authenticated
+app.get('/submit', (req,res)=>{
+  if (req.isAuthenticated()) {
+   res.render('submit')
+ }else {
+   res.redirect('/login')
+ }
 })
+
+//post request to submit route
+app.post('/submit', (req,res)=>{
+  const submitedSecret = req.body.secret
+//search for the user and save secrets to database and redirect to secrets route
+  user.findById(req.user.id, (err,foundUser)=>{
+    if (err) {
+      console.log(err);
+    }else {
+      if (foundUser) {
+        foundUser.secret =submitedSecret;
+        foundUser.save(()=>{
+          res.redirect('/secrets')
+        });
+      }
+    }
+  });
+});
+
+//post request to register route
 app.post('/register', (req,res)=>{
-//save inputs to db using passpor
+//save inputs to db using passport
  user.register({username: req.body.username}, req.body.password, function(err, user){
    if (err) {
 console.log(err);
  res.redirect('/register')
 }else {
-  //authenticate the user using passport
+  //authenticate the user using passport and grant access to authenticated user
+  //create a cookie to store login session
   passport.authenticate('local')(req,res, function(){
     res.redirect('/secrets')
-  })
+  });
 }
- })
-})
+});
+});
 
-
+//get request to log in page
 app.get('/login',(req,res)=>{
   res.render('login')
 });
 
-
+//using passport parameters to log users out
 app.get('/logout',(req,res)=>{
   req.logout((err)=>{
     if (err) {
       return next(err)
-
     }
     res.redirect('/');
-
   });
-})
+});
+
+//post request to login page
 app.post('/login', (req,res)=>{
+  //create a new user
 const newUser = new user ({
   username: req.body.username,
   password: req.body.password
-})
-//using passport to authenticate user
+});
+//using passport to authenticate user by checking if record exists on database
 req.login(newUser,(err)=>{
   if (err) {
     console.log(err);
   }else {
-    //authenticate users and login
+    //authenticate users and login using local strategy
+    //create a cookie to store login session
     passport.authenticate('local')(req,res, function(){
       res.redirect('/secrets')
     })
-  }
-})
-})
+  };
+});
+});
+
+
+//localhost address
 app.listen(3000, ()=>{
   console.log('Success');
 });
